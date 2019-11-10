@@ -13,10 +13,10 @@ rsync是一个文件同步工具。通常用于不同节点间的文件同步，
 -z, --compress              compress file data during the transfer
 -v, --verbose               increase verbosity
 -P                          same as --partial --progress
---bwlimit=RATE          limit socket I/O bandwidth
---exclude=PATTERN       exclude files matching PATTERN
---progress              show progress during transfer
---partial               keep partially transferred files
+--bwlimit=RATE              limit socket I/O bandwidth
+--exclude=PATTERN           exclude files matching PATTERN
+--progress                  show progress during transfer
+--partial                   keep partially transferred files
 ```
 
 - 文件同步，并改变文件属主
