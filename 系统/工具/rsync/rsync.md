@@ -19,11 +19,22 @@ rsync是一个文件同步工具。通常用于不同节点间的文件同步，
 --partial                   keep partially transferred files
 ```
 
-- 文件同步，并改变文件属主
+- 同步本地目录A下的文件到本地目录B
 ```
-rsync -avh --chown=USER:GROUP /foo user@remote-host:/tmp/
+rsync -avH /A/ /B/
 ```
-- ssh协议，非22端口文件同步
+
+- 拷贝目录A到本地目录B下
 ```
-rsync -avh '-e ssh -p 52222' local-file user@remote-host:remote-file
+rsync -avH A /B/
+```
+
+- 同步本地目录A下的文件到本地目录B，同时排除a,c文件
+```
+rsync -avH --exclude={a,c} /A/ /B/
+```
+
+- 将目录`A`拷贝到`11.76.32.1`的`B`目录下
+```
+rsync -avP '-e ssh -p 52222' A 11.76.32.1:/B/
 ```
