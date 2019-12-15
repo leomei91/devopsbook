@@ -1,456 +1,609 @@
-# 安装部署
-## kubeadm方式
-### 环境说明
-- 系统信息
+[toc]
+
+# 基本概念
+## 集群内部DNS解析
+### service
+主机名完整格式：
 ```
-centos7.4
-3.10.0-693.el7.x86_64
-8C32G
+<service-name>.<namespace-name>.svc.cluster.local
 ```
-- 软件信息
+通常，后面的 `svc.cluster.local` 可以省略。
+
+对于同一个namespace，使用 `service-name` 即可。
+
+## Pod的生命周期
+Pod的状态有如下几种：
 ```
-docker 19.03.4
-etcdctl version: 3.3.11
-API version: 3
-k8s v1.16.2
-calico v3.8.4
-```
-- 节点信息
-```
-10.43.75.131 k8s-m1
-10.43.75.132 k8s-m2
-10.43.75.133 k8s-m3
+Pending: api server已经发出创建Pod的指令，但是Pod中的容器还没有全部创建完成，有可能还在拉取镜像
+Running: Pod中的容器已经全部创建完成，并且至少有个容器处于运行或者正在启动，或者正在重启状态
+Succeeded: Pod中的容器全部成功执行并退出，而且不会重启
+Failed: Pod中的容器已经退出，但是至少有个退出失败
+Unknown: 由于某种原因，无法获取Pod的信息
 ```
 
-### 系统初始化
+## nodePort,port和targetPort
+- nodePort: 宿主机的端口
+- port: service(cluster)的端口，
+- targetPort: 容器(Pod)端口，1 to 65535
+
+## Label
+通过`spec.selector`字段来指定这个RC管理哪些Pod。新建的RC会管理所有拥有`app:xxxLabel`的Pod。这样的`spec.selector`在Kubernetes中被称作Label Selector。
+
+## PV和PVC
+PV是提供存储的，PVC是消费存储的，PVC可以在Deployment中使用。
+
+## Deployment
+### Deployment的特性
+1.Deployment相当于RC的升级版
+
+2.Deployment内部使用了Replica Set
+
+### Deployment对比RC
+Deployment对比RC，最大的一个升级是：能够随时了解当前Pod的部署状态。
+
+### Deployment的应用场景
+1.通过创建deployment对象来创建replica set对象，最终创建pod副本对象
+
+2.通过检查deployment来查询部署进度
+
+3.通过deployment来实现pod的更新和回滚（扩容，缩容）
+
+## Service
+### 特性
+1.service定义了一个服务的访问入口
+
+2.service相当于微服务架构中的一个微服务
+
+3.service和后端pod集群交互是通过label selector实现的
+
+### 总结
+传统服务通过k8s的service实现了微服务，不同的service提供不同业务的服务，它们之间彼此独立，一起组成强大而灵活的微服务系统。
+
+## kube proxy
+### 作用
+kube proxy将来自service的请求转发给后端的pod。
+
+### 特性
+service被创建，系统会分配给它一个独立的IP（cluster IP），这个IP是固定的
+
+## Annotation
+### 特性
+1.中文为注解
+
+2.用来定义资源对象的特殊信息
+
+### 常见的annotation
+1.build,release信息
+
+2.docker信息
+
+3.日志库，监控库等资源库的地址信息
+
+## Volumn
+### 分类
 ```
-#关闭交换空间
-swapoff -a  &&  sed -i 's/.*swap.*/#&/' /etc/fstab
-```
-```
-#开启bridge-nf 允许二层的网桥在转发包时会被iptables的FORWARD规则所过滤
-cat <<EOF >  /etc/sysctl.d/k8s.conf
-net.bridge.bridge-nf-call-ip6tables = 1
-net.bridge.bridge-nf-call-iptables = 1
-net.ipv4.ip_forward = 1
-#不使用swap
-vm.swappiness=0
-EOF
-```
-```
-sysctl --system
-```
-```
-#加载ipvs模块（为了kube-proxy使用ipvs模式）
-modprobe -- ip_vs
-modprobe -- ip_vs_rr
-modprobe -- ip_vs_wrr
-modprobe -- ip_vs_sh
-modprobe -- nf_conntrack_ipv4
-```
-- 配置仓库
-```
-cat <<EOF > /etc/yum.repos.d/kubernetes.repo
-[kubernetes]
-name=Kubernetes
-baseurl=https://mirrors.aliyun.com/kubernetes/yum/repos/kubernetes-el7-x86_64
-enabled=1
-gpgcheck=0
-EOF
+宿主机: emptyDir、HostPath
+集群存储: configmap、secret
+云存储: awsElasticBlockStore、gcePersistentDisk等
+外部存储: glusterfs、Ceph等
 ```
 
-- 同步时间
+# 原理架构
+## master节点
+master是k8s集群的控制节点，每个k8s集群都至少有一个master节点。
+
+master节点由三个组件构成：api server,controller manager,scheduler。
+
+### api server
+api server是集群的控制入口，也是资源对象操作的唯一入口。提供了rest风格API供客户端调用。
+
+**api server最核心的功能就是提供了操作资源对象的http restful接口。**
+
+#### 特殊的proxy接口
+api server提供的接口中，有一种接口比较特殊，就是proxy接口。发送到proxy接口的请求，会被转发到kubelet进程，由kubelet负责处理请求并响应。
+
+### controller manager
+controller manager是集群的控制中心。相当于资源对象的“管家”。
+
+### scheduler
+scheduler是集群的调度中心。负责Pod的调度。
+
+## node节点
+node节点时集群的工作节点。负责接收master节点的指令并在本地执行。
+
+node节点由三个组件构成：kubelet,proxy,docker
+
+### kubelet
+kubelet负责Pod的创建，启动，销毁。
+
+### kube proxy
+kube proxy负责service资源对象的实现，提供Pod的负载均衡。
+
+### docker 
+docker负责容器的创建和管理。
+
+## etcd
+etcd是k8s集群的存储中心，负责存储k8s各种资源的信息。
+
+## k8s客户端
+用户通过k8s客户端和k8s集群进行交互。常见的客户端有：kubectl工具,编程语言的sdk。
+
+# 配置使用
+## 默认的NodePort范围
 ```
-ntpdate time1.aliyun.com
+30000-32767
 ```
 
-- 安装docker-ce
-
-安装步骤省略。
-
-- 安装依赖包
+## 从外部访问k8s内的服务
+### kube-proxy方式
+master节点执行：
 ```
-yum -y install ipvsadm ipset
+kubectl proxy --address=0.0.0.0 --port=8888 --accept-hosts='^*$'
 ```
-
-- 安装基本组件
+接口格式：
 ```
-yum install -y kubectl kubeadm kebelet
+http://master-ip:port/api/v1/namespaces/<namespace>/services/<service-name>:<service-port-name>/proxy/
 ```
-- 加入开机自启
+示例
 ```
-systemctl enable kubelet
+http://11.76.32.31:8888/api/v1/namespaces/default/services/nginx:nginx-port/proxy/
 ```
 
-### 配置证书
-- 安装cfssl工具
+### NodePort
+> NodePort服务是让外部流量直接访问服务的最原始方式。NodePort，顾名思义，在所有的节点（虚拟机）上开放指定的端口，所有发送到这个端口的流量都会直接转发到服务。
+
+yaml文件示例：
 ```
-cd /opt
-mkdir k8s
-cd k8s
-wget -O /bin/cfssl https://pkg.cfssl.org/R1.2/cfssl_linux-amd64
-wget -O /bin/cfssljson https://pkg.cfssl.org/R1.2/cfssljson_linux-amd64
-wget -O /bin/cfssl-certinfo  https://pkg.cfssl.org/R1.2/cfssl-certinfo_linux-amd64
-for cfssl in `ls /bin/cfssl*`;do chmod +x $cfssl;done;
+apiVersion: v1
+kind: Service
+metadata:  
+ name: my-nodeport-service
+selector:   
+ app: my-app
+spec:
+ type: NodePort
+ ports:  
+ - name: http
+  port: 80
+  targetPort: 80
+  nodePort: 30036
+  protocol: TCP
 ```
+缺点：
 ```
-mkdir ssl
-cd ssl
+1.一个端口只能供一个服务使用；
+
+2.只能使用30000–32767的端口；
+
+3.如果节点 / 虚拟机的IP地址发生变化，需要进行处理。
 ```
 
-- 配置etcd的证书
+### Ingress
+- `traefik-rbac.yaml`
 ```
-cat > ca-config.json << EOF
-{
-  "signing": {
-    "default": {
-      "expiry": "87600h"
-    },
-    "profiles": {
-      "kubernetes": {
-        "usages": [
-            "signing",
-            "key encipherment",
-            "server auth",
-            "client auth"
-        ],
-        "expiry": "87600h"
-      }
-    }
-  }
-}
-EOF
-```
-```
-cat > etcd-ca-csr.json << EOF
-{
-  "CN": "etcd",
-  "key": {
-    "algo": "rsa",
-    "size": 2048
-  },
-  "names": [
-    {
-      "C": "CN",
-      "ST": "Shanghai",
-      "L": "Shanghai",
-      "O": "etcd",
-      "OU": "Etcd Security"
-    }
-  ]
-}
-EOF
-```
-```
-cat > etcd-csr.json << EOF
-{
-    "CN": "etcd",
-    "hosts": [
-      "127.0.0.1",
-      "10.43.75.131",
-      "10.43.75.132",
-      "10.43.75.133"
-    ],
-    "key": {
-        "algo": "rsa",
-        "size": 2048
-    },
-    "names": [
-        {
-            "C": "CN",
-            "ST": "Shanghai",
-            "L": "Shanghai",
-            "O": "etcd",
-            "OU": "Etcd Security"
-        }
-    ]
-}
-EOF
-```
-- 生成证书
-```
-cfssl gencert -initca etcd-ca-csr.json | cfssljson -bare etcd-ca
-cfssl gencert -ca=etcd-ca.pem -ca-key=etcd-ca-key.pem -config=ca-config.json -profile=kubernetes etcd-csr.json | cfssljson -bare etcd
-```
-- 分发证书
-```
-mkdir -pv /etc/etcd/ssl
-mkdir -pv /etc/kubernetes/pki/etcd
-cp etcd*.pem /etc/etcd/ssl
-cp etcd*.pem /etc/kubernetes/pki/etcd
-```
-```
-scp -r -P52222 /etc/etcd k8s-m1:/etc/
-scp -r -P52222 /etc/etcd k8s-m2:/etc/
-scp -r -P52222 /etc/etcd k8s-m3:/etc/
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1beta1
+metadata:
+  name: traefik-ingress-controller
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - services
+      - endpoints
+      - secrets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - extensions
+    resources:
+      - ingresses
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+    - extensions
+    resources:
+    - ingresses/status
+    verbs:
+    - update
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1beta1
+metadata:
+  name: traefik-ingress-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: traefik-ingress-controller
+subjects:
+- kind: ServiceAccount
+  name: traefik-ingress-controller
+  namespace: kube-system
 ```
 
-### 安装etcd
+- `traefik-ds.yaml`
 ```
-yum install etcd -y
-```
-- 配置
-```
-vim /etc/etcd/etcd.conf
-```
-etcd1
-```
-ETCD_DATA_DIR="/var/lib/etcd/default.etcd"
-ETCD_LISTEN_PEER_URLS="https://10.43.75.131:2380"
-ETCD_LISTEN_CLIENT_URLS="https://localhost:2379,https://10.43.75.131:2379"
-ETCD_NAME="etcd1"
-ETCD_INITIAL_ADVERTISE_PEER_URLS="https://10.43.75.131:2380"
-ETCD_ADVERTISE_CLIENT_URLS="https://localhost:2379,https://10.43.75.131:2379"
-ETCD_INITIAL_CLUSTER="etcd1=https://10.43.75.131:2380,etcd2=https://10.43.75.132:2380,etcd3=https://10.43.75.133:2380"
-ETCD_INITIAL_CLUSTER_TOKEN="etcd-cluster"
-ETCD_CERT_FILE="/etc/etcd/ssl/etcd.pem"
-ETCD_KEY_FILE="/etc/etcd/ssl/etcd-key.pem"
-ETCD_TRUSTED_CA_FILE="/etc/etcd/ssl/etcd-ca.pem"
-ETCD_PEER_CERT_FILE="/etc/etcd/ssl/etcd.pem"
-ETCD_PEER_KEY_FILE="/etc/etcd/ssl/etcd-key.pem"
-ETCD_PEER_TRUSTED_CA_FILE="/etc/etcd/ssl/etcd-ca.pem"
-```
-etcd2
-```
-ETCD_DATA_DIR="/var/lib/etcd/default.etcd"
-ETCD_LISTEN_PEER_URLS="https://10.43.75.132:2380"
-ETCD_LISTEN_CLIENT_URLS="https://localhost:2379,https://10.43.75.132:2379"
-ETCD_NAME="etcd2"
-ETCD_INITIAL_ADVERTISE_PEER_URLS="https://10.43.75.132:2380"
-ETCD_ADVERTISE_CLIENT_URLS="https://localhost:2379,https://10.43.75.132:2379"
-ETCD_INITIAL_CLUSTER="etcd1=https://10.43.75.131:2380,etcd2=https://10.43.75.132:2380,etcd3=https://10.43.75.133:2380"
-ETCD_INITIAL_CLUSTER_TOKEN="etcd-cluster"
-ETCD_CERT_FILE="/etc/etcd/ssl/etcd.pem"
-ETCD_KEY_FILE="/etc/etcd/ssl/etcd-key.pem"
-ETCD_TRUSTED_CA_FILE="/etc/etcd/ssl/etcd-ca.pem"
-ETCD_PEER_CERT_FILE="/etc/etcd/ssl/etcd.pem"
-ETCD_PEER_KEY_FILE="/etc/etcd/ssl/etcd-key.pem"
-ETCD_PEER_TRUSTED_CA_FILE="/etc/etcd/ssl/etcd-ca.pem"
-```
-etcd3
-```
-ETCD_DATA_DIR="/var/lib/etcd/default.etcd"
-ETCD_LISTEN_PEER_URLS="https://10.43.75.133:2380"
-ETCD_LISTEN_CLIENT_URLS="https://localhost:2379,https://10.43.75.133:2379"
-ETCD_NAME="etcd3"
-ETCD_INITIAL_ADVERTISE_PEER_URLS="https://10.43.75.133:2380"
-ETCD_ADVERTISE_CLIENT_URLS="https://localhost:2379,https://10.43.75.133:2379"
-ETCD_INITIAL_CLUSTER="etcd1=https://10.43.75.131:2380,etcd2=https://10.43.75.132:2380,etcd3=https://10.43.75.133:2380"
-ETCD_INITIAL_CLUSTER_TOKEN="etcd-cluster"
-ETCD_CERT_FILE="/etc/etcd/ssl/etcd.pem"
-ETCD_KEY_FILE="/etc/etcd/ssl/etcd-key.pem"
-ETCD_TRUSTED_CA_FILE="/etc/etcd/ssl/etcd-ca.pem"
-ETCD_PEER_CERT_FILE="/etc/etcd/ssl/etcd.pem"
-ETCD_PEER_KEY_FILE="/etc/etcd/ssl/etcd-key.pem"
-ETCD_PEER_TRUSTED_CA_FILE="/etc/etcd/ssl/etcd-ca.pem"
-```
-- 启动
-```
-chown -R etcd:etcd /etc/etcd/
-```
-```
-systemctl enable etcd
-systemctl start etcd
-```
-- 注意点
-
-因为最新的k8s集群只支持etcd api v3，所以使用的时候要注意添加环境变量：
-```
-ETCDCTL_API=3 etcdctl version
-etcdctl version: 3.3.11
-API version: 3.3
-```
-- 检查etcd集群
-```
-ETCDCTL_API=3 etcdctl --endpoints=https://127.0.0.1:2379 --cacert="/etc/etcd/ssl/etcd-ca.pem" --cert="/etc/etcd/ssl/etcd.pem" --key="/etc/etcd/ssl/etcd-key.pem"   member list
-```
-```
-5018a20e9dd0a52e, started, etcd1, https://10.43.75.131:2380, https://10.43.75.131:2379,https://localhost:2379
-743b11be54fa9c3a, started, etcd3, https://10.43.75.133:2380, https://10.43.75.133:2379,https://localhost:2379
-f2896e201f815f09, started, etcd2, https://10.43.75.132:2380, https://10.43.75.132:2379,https://localhost:2379
-```
-- 测试写入和读取
-
-写入
-```
-ETCDCTL_API=3 etcdctl --endpoints=https://127.0.0.1:2379 --cacert="/etc/etcd/ssl/etcd-ca.pem" --cert="/etc/etcd/ssl/etcd.pem" --key="/etc/etcd/ssl/etcd-key.pem" put /name1 "leo"
-```
-读取
-```
-ETCDCTL_API=3 etcdctl --endpoints=https://127.0.0.1:2379 --cacert="/etc/etcd/ssl/etcd-ca.pem" --cert="/etc/etcd/ssl/etcd.pem" --key="/etc/etcd/ssl/etcd-key.pem" get /name1
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: traefik-ingress-controller
+  namespace: kube-system
+---
+kind: DaemonSet
+apiVersion: apps/v1
+metadata:
+  name: traefik-ingress-controller
+  namespace: kube-system
+  labels:
+    k8s-app: traefik-ingress-lb
+spec:
+  selector:
+    matchLabels:
+      k8s-app: traefik-ingress-lb
+      name: traefik-ingress-lb
+  template:
+    metadata:
+      labels:
+        k8s-app: traefik-ingress-lb
+        name: traefik-ingress-lb
+    spec:
+      serviceAccountName: traefik-ingress-controller
+      terminationGracePeriodSeconds: 60
+      containers:
+      - image: traefik:v1.7
+        name: traefik-ingress-lb
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 80
+          hostPort: 80
+        - name: admin
+          containerPort: 8080
+          hostPort: 8080
+        securityContext:
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - NET_BIND_SERVICE
+        args:
+        - --api
+        - --kubernetes
+        - --logLevel=INFO
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: traefik-ingress-service
+  namespace: kube-system
+spec:
+  selector:
+    k8s-app: traefik-ingress-lb
+  ports:
+    - protocol: TCP
+      port: 80
+      name: web
+    - protocol: TCP
+      port: 8080
+      name: admin
 ```
 
-### master节点（k8s-m1）
-- 编写配置文件
+- `traefik-ui.yaml`
 ```
-cd /opt/k8s
-vim kubeadm-config.yml
-```
-```
-apiVersion: kubeadm.k8s.io/v1beta2
-kind: ClusterConfiguration
-kubernetesVersion: v1.16.0
-apiServer:
-  certSANs:
-  - "10.43.75.131"
-  - "10.43.75.132"
-  - "10.43.75.133"
-  - "127.0.0.1"
-etcd:
-  external:
-      endpoints:
-      - https://10.43.75.131:2379
-      - https://10.43.75.132:2379 
-      - https://10.43.75.133:2379 
-      caFile: /etc/kubernetes/pki/etcd/etcd-ca.pem 
-      certFile: /etc/kubernetes/pki/etcd/etcd.pem 
-      keyFile: /etc/kubernetes/pki/etcd/etcd-key.pem 
-controlPlaneEndpoint: "10.43.75.131:6443"
-networking:
-  podSubnet: 10.244.0.0/16
-imageRepository: registry.aliyuncs.com/google_containers
-```
-- kubeadm初始化
-```
-kubeadm init --config kubeadm-config.yml
-```
-```
-...
-Your Kubernetes control-plane has initialized successfully!
-
-To start using your cluster, you need to run the following as a regular user:
-
-  mkdir -p $HOME/.kube
-  sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
-  sudo chown $(id -u):$(id -g) $HOME/.kube/config
-
-You should now deploy a pod network to the cluster.
-Run "kubectl apply -f [podnetwork].yaml" with one of the options listed at:
-  https://kubernetes.io/docs/concepts/cluster-administration/addons/
-
-You can now join any number of control-plane nodes by copying certificate authorities 
-and service account keys on each node and then running the following as root:
-
-  kubeadm join 10.43.75.131:6443 --token 7zppep.jn98shsqab6rmwae \
-    --discovery-token-ca-cert-hash sha256:efe814413debd9c764f2e9f207fe6f6ee1b9decaf04f9642b94cedd6723818c2 \
-    --control-plane       
-
-Then you can join any number of worker nodes by running the following on each as root:
-
-kubeadm join 10.43.75.131:6443 --token 7zppep.jn98shsqab6rmwae \
-    --discovery-token-ca-cert-hash sha256:efe814413debd9c764f2e9f207fe6f6ee1b9decaf04f9642b94cedd6723818c2 
-```
-- k8s认证配置
-```
-mkdir -p $HOME/.kube
-sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
-sudo chown $(id -u):$(id -g) $HOME/.kube/config
-```
-- 配置网络插件
-```
-kubectl apply -f https://docs.projectcalico.org/v3.8/manifests/calico.yaml
-```
-- 使用ipvs
-```
-#1.修改ConfigMap的kube-system/kube-proxy中的config.conf，mode: “ipvs”：
-kubectl edit cm kube-proxy -n kube-system
-#2.删除pods 重新创建
-kubectl get pod -n kube-system | grep kube-proxy | awk '{system("kubectl delete pod "$1" -n kube-system")}'
-```
-
-### node节点
-- 加入node节点到集群
-```
-kubeadm join 10.43.75.131:6443 --token 7zppep.jn98shsqab6rmwae \
-    --discovery-token-ca-cert-hash sha256:efe814413debd9c764f2e9f207fe6f6ee1b9decaf04f9642b94cedd6723818c2 
-```
-- 检查节点信息
-```
-kubectl get nodes
-```
-```
-NAME     STATUS   ROLES    AGE    VERSION
-k8s-m1   Ready    master   41m    v1.16.2
-k8s-m2   Ready    <none>   3m1s   v1.16.2
-k8s-m3   Ready    <none>   2m8s   v1.16.2
-```
-
-### 测试集群是否正常工作
-- 测试用例
-```
-cd /opt/k8s
-```
-```
-cat << EOF > nginx.yaml
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: nginx
+  name: traefik-web-ui
+  namespace: kube-system
 spec:
   selector:
-    app: nginx
-  type: NodePort
+    k8s-app: traefik-ingress-lb
   ports:
-  - port: 80
-    nodePort: 31000
-    name: nginx-port
-    targetPort: 80
-    protocol: TCP
-
+  - name: web
+    port: 80
+    targetPort: 8080
 ---
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: traefik-web-ui
+  namespace: kube-system
+spec:
+  rules:
+  - host: traefik-ui.minikube
+    http:
+      paths:
+      - path: /
+        backend:
+          serviceName: traefik-web-ui
+          servicePort: web
+```
+
+## 常用命令
+- 查看服务器和客户端版本
+```
+kubectl version
+```
+
+- 给node打tag
+```
+kubectl label nodes k8s-m2 node=w2 
+```
+
+- 删除node的tag
+```
+kubectl label nodes <node-name> <label-key>-
+```
+
+- 查看node的标签
+```
+kubectl get nodes --show-labels
+```
+
+- 查看节点列表详细信息
+```
+kubectl get nodes -o wide
+```
+
+- 查看节点详细信息
+```
+kubectl describe node k8s-m2
+```
+
+- 查看日志
+```
+kubectl logs -n work podName
+```
+`-f` 查看实时日志。
+
+- 查看所有可用的机器IP
+```
+ps -ef|grep kube-apiserver
+```
+查看`service-cluster-ip-range`
+
+- 查看可用的端口范围
+```
+ps -ef|grep kube-apiserver
+```
+默认`30000-32767`。
+
+- 查看所有名称空间
+```
+kubectl get namespaces
+```
+
+- 创建名称空间
+```
+kubectl create namespace dev
+```
+
+- 查看集群各组件状态
+```
+kubectl get cs
+```
+
+- 编辑正在运行的deployment
+```
+kubectl edit deployment/service_name
+# service_name可以通过 `kubectl get deployments` 获取
+```
+
+- 查看当前的leader
+```
+kubectl get endpoints kube-controller-manager --namespace=kube-system  -o yaml
+```
+
+- 查看支持的api版本
+```
+kubectl api-versions
+```
+
+- 创建令牌
+```
+kubectl create sa dashboard-admin -n kube-system
+kubectl create clusterrolebinding dashboard-admin --clusterrole=cluster-admin --serviceaccount=kube-system:dashboard-admin
+
+ADMIN_SECRET=$(kubectl get secrets -n kube-system | grep dashboard-admin | awk '{print $1}')
+
+DASHBOARD_LOGIN_TOKEN=$(kubectl describe secret -n kube-system ${ADMIN_SECRET} | grep -E '^token' | awk '{print $2}')
+
+echo ${DASHBOARD_LOGIN_TOKEN}
+```
+
+## Pod绑定主机名
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  name: busybox
+  labels:
+    name: busybox
+spec:
+  hostname: busybox-1
+  subdomain: busybox-subdomain
+  containers:
+  name: busybox
+  - image: busybox
+```
+注意这个hostname和kubectl get pod获取的Name无关。
+
+## 使用 HostAliases 添加hosts解析
+```
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: nginx
+  labels:
+    app: task-backend
+  name: task-backend
+  namespace: dev
 spec:
-  replicas: 2
   selector:
     matchLabels:
-      app: nginx
+      app: task-backend
+  replicas: 2
   template:
     metadata:
-      name: nginx
       labels:
-        app: nginx
+        app: task-backend
     spec:
+      nodeSelector:
+        node: w2
+      hostAliases:
+      - ip: 11.76.32.22
+        hostnames:
+        - "11-76-32-22"
+      - ip: 11.76.32.23
+        hostnames:
+        - "11-76-32-23"
+      hostname: task-backend
+```
+
+## 添加外部DNS服务器
+### 使用resolv.conf指定
+- 编辑文件`/etc/resolv.conf`
+```
+nameserver 11.76.32.6
+```
+注意：Pod重新创建后，DNS才生效。
+
+- 查看coredns的配置
+```
+kubectl -n kube-system get configmap coredns -o yaml
+```
+
+- 在线修改coredns的配置
+```
+kubectl -n kube-system edit configmap coredns
+```
+注意：添加外部DNS，不重启coredns是不生效的。
+
+### 直接指定上游DNS服务器
+```
+data:
+  #upstreamNameservers: |
+  #  ["11.76.32.2"]
+  Corefile: |
+    .:53 {
+        errors
+        health
+        kubernetes cluster.local in-addr.arpa ip6.arpa {
+            pods insecure
+            upstream
+            fallthrough in-addr.arpa ip6.arpa
+        }
+        prometheus :9153
+        forward . 11.76.32.6
+        cache 30
+        loop
+        reload
+        loadbalance
+    }
+```
+
+## 设置镜像拉取策略
+```
       containers:
-      - name: nginx
-        image: nginx
+      - image: traefik
+        name: traefik-ingress-lb
+        imagePullPolicy: IfNotPresent
+```
+
+## IPVS
+- 查看ipvs规则
+```
+ipvsadm -Ln
+```
+
+- 检查内核是否支持ipvs
+```
+lsmod | grep ip_vs
+```
+```
+p_vs_sh               12688  0 
+ip_vs_wrr              12697  0 
+ip_vs_rr               12600  188 
+ip_vs                 141092  194 ip_vs_rr,ip_vs_sh,ip_vs_wrr
+nf_conntrack          133387  7 ip_vs,nf_nat,nf_nat_ipv4,xt_conntrack,nf_nat_masquerade_ipv4,nf_conntrack_netlink,nf_conntrack_ipv4
+libcrc32c              12644  4 xfs,ip_vs,nf_nat,nf_conntrack
+```
+
+- 检查ipvs是否编译进了内核
+```
+grep -e ipvs -e nf_conntrack_ipv4 /lib/modules/$(uname -r)/modules.builtin
+```
+如果编译成内核，则得到如下结果
+```
+kernel/net/ipv4/netfilter/nf_conntrack_ipv4.ko
+kernel/net/netfilter/ipvs/ip_vs.ko
+kernel/net/netfilter/ipvs/ip_vs_rr.ko
+kernel/net/netfilter/ipvs/ip_vs_wrr.ko
+kernel/net/netfilter/ipvs/ip_vs_lc.ko
+kernel/net/netfilter/ipvs/ip_vs_wlc.ko
+kernel/net/netfilter/ipvs/ip_vs_fo.ko
+kernel/net/netfilter/ipvs/ip_vs_ovf.ko
+kernel/net/netfilter/ipvs/ip_vs_lblc.ko
+kernel/net/netfilter/ipvs/ip_vs_lblcr.ko
+kernel/net/netfilter/ipvs/ip_vs_dh.ko
+kernel/net/netfilter/ipvs/ip_vs_sh.ko
+kernel/net/netfilter/ipvs/ip_vs_sed.ko
+kernel/net/netfilter/ipvs/ip_vs_nq.ko
+kernel/net/netfilter/ipvs/ip_vs_ftp.ko
+```
+
+## 使用nfs做共享盘
+1.所有节点都要安装nfs-utils
+```
+yum install -y nfs-utils
+```
+
+2.编写yaml文件
+```
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: register
+  name: register
+  namespace: prod
+spec:
+  selector:
+    matchLabels:
+      app: register
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: register
+    spec:
+      nodeSelector:
+        node: w1
+      containers:
+      - name: register
+        image: register:v1.0.1
         ports:
-        - containerPort: 80
-EOF
+        - containerPort: 13001
+        volumeMounts:
+        - mountPath: /data/nfs
+          name: nfs-server
+        - mountPath: /data/logs
+          name: register-log
+      volumes:
+      - name: nfs-server
+        nfs:
+          server: 11.76.32.10
+          path: /data/nfs/register
+      - name: register-log
+        hostPath:
+          path: /data/logs/register
 ```
-```
-kubectl apply -f nginx.yaml
-```
-- 检查域名解析
-```
-kubectl run curl --image=radial/busyboxplus:curl -i --tty
-$ nslookup nginx
-$ nslookup kubernetes
-```
-nginx域名解析正确，表示集群工作正常。
 
-### 安装Rancher
-rancher是k8s管理的平台。
-```
-mkdir /data/rancher
-mkdir /var/log/rancher/
-```
-```
-docker run -d --restart=unless-stopped \
--p 80:80 -p 443:443 \
--v /data/rancher:/var/lib/rancher/ \
--v /root/var/log/rancher/auditlog:/var/log/auditlog \
--e AUDIT_LEVEL=3 \
-rancher/rancher:stable
-```
-- 访问web
-```
-https://10.43.75.131
-```
-- 添加一个集群
-
-- 在master节点执行下面命令：
-![](https://res.cloudinary.com/dkkg9pm0i/image/upload/v1573550572/websites/ecarx/QQ%E6%88%AA%E5%9B%BE20191112172057.png)
+# 文档资料
+http://docs.kubernetes.org.cn/537.html
