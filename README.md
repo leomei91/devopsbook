@@ -17,6 +17,7 @@
     * [工具](https://github.com/leomei91/devopsbook/tree/master/%E7%B3%BB%E7%BB%9F/%E5%B7%A5%E5%85%B7)
         * [java](https://github.com/leomei91/devopsbook/blob/master/%E7%B3%BB%E7%BB%9F/%E5%B7%A5%E5%85%B7/java/java.md)
         * [rsync](https://github.com/leomei91/devopsbook/blob/master/%E7%B3%BB%E7%BB%9F/%E5%B7%A5%E5%85%B7/rsync/rsync.md)
+        * [tmux](https://github.com/leomei91/devopsbook/blob/master/%E7%B3%BB%E7%BB%9F/%E5%B7%A5%E5%85%B7/tmux/tmux.md)
 * [容器](https://github.com/leomei91/devopsbook/tree/master/%E5%AE%B9%E5%99%A8)
     * [docker](https://github.com/leomei91/devopsbook/blob/master/%E5%AE%B9%E5%99%A8/docker/docker.md)
     * [k8s](https://github.com/leomei91/devopsbook/blob/master/%E5%AE%B9%E5%99%A8/k8s/k8s.md)
