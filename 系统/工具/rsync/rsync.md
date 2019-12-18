@@ -36,5 +36,5 @@ rsync -avH --exclude={a,c} /A/ /B/
 
 - 将目录`A`拷贝到`11.76.32.1`的`B`目录下
 ```
-rsync -avP '-e ssh -p 52222' A 11.76.32.1:/B/
+rsync -avH '-e ssh -p 52222' A 11.76.32.1:/B/
 ```
