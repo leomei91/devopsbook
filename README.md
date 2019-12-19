@@ -30,6 +30,7 @@
     * [postgresql](https://github.com/leomei91/devopsbook/blob/master/%E5%A4%A7%E6%95%B0%E6%8D%AE/postgresql/postgresql.md)
     * [mysql](https://github.com/leomei91/devopsbook/blob/master/%E5%A4%A7%E6%95%B0%E6%8D%AE/mysql/mysql.md)
     * [tidb](https://github.com/leomei91/devopsbook/blob/master/%E5%A4%A7%E6%95%B0%E6%8D%AE/tidb/tidb.md)
+    * [redis](https://github.com/leomei91/devopsbook/blob/master/%E5%A4%A7%E6%95%B0%E6%8D%AE/redis/redis.md)
 * [监控](https://github.com/leomei91/devopsbook/tree/master/%E7%9B%91%E6%8E%A7)
     * [zabbix](https://github.com/leomei91/devopsbook/blob/master/%E7%9B%91%E6%8E%A7/zabbix/zabbix.md)
     * [prometheus](https://github.com/leomei91/devopsbook/blob/master/%E7%9B%91%E6%8E%A7/prometheus/prometheus.md)
